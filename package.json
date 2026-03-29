@@ -1,6 +1,6 @@
 {
   "name": "code-review-pro-skill",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Portable code review skills for Codex, Claude, and GitHub Copilot.",
   "license": "MIT",
   "type": "commonjs",
