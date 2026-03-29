@@ -57,7 +57,7 @@ Routes requests to the correct skill based on intent.
 ## 🚀 Installation
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/agarc179/code-review-system
 cd code-review-system
 ./install.sh
 ```
