@@ -1,3 +1,0 @@
-name: review-skill-router
-description: Entry point for all code-related requests. Determines whether to review or refactor code and delegates to the correct skill.
-entrypoint: SKILL.md
