@@ -1,0 +1,14 @@
+{
+  "name": "code-review-pro-skill",
+  "version": "0.1.0",
+  "bin": "codepro",
+  "skills": [
+    "clean-code-enforcer",
+    "senior-code-reviewer"
+  ],
+  "assistants": [
+    "codex",
+    "claude",
+    "githubcopilot"
+  ]
+}
