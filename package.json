@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "init:codex": "node ./src/cli.js init --ai codex",
+    "export:claude-desktop": "node ./src/cli.js export claude-desktop --dir ./dist/claude-desktop",
     "test:smoke": "node ./src/cli.js --help"
   },
   "engines": {

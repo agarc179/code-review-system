@@ -1,4 +1,5 @@
 const {
+  exportClaudeDesktopSkills,
   installSkills,
   listSupportedAssistants,
   printHelp,
@@ -15,8 +16,16 @@ function parseArgs(argv) {
     help: false,
   };
 
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
     if (!command && !arg.startsWith("-")) {
+      if (arg === "export" && argv[index + 1] === "claude-desktop") {
+        command = "export claude-desktop";
+        index += 1;
+        continue;
+      }
+
       command = arg;
       continue;
     }
@@ -80,20 +89,36 @@ async function main() {
       return;
     }
 
-    if (command !== "init") {
-      throw new Error(
-        `Unsupported command "${command}". Supported commands: init`
-      );
+    if (command === "init") {
+      const supportedAssistants = listSupportedAssistants();
+      await installSkills({
+        ai: options.ai,
+        cwd: options.cwd,
+        globalInstall: options.global,
+        force: options.force,
+        supportedAssistants,
+      });
+      return;
     }
 
-    const supportedAssistants = listSupportedAssistants();
-    await installSkills({
-      ai: options.ai,
-      cwd: options.cwd,
-      globalInstall: options.global,
-      force: options.force,
-      supportedAssistants,
-    });
+    if (command === "export claude-desktop") {
+      const archives = exportClaudeDesktopSkills({
+        outputDir: options.cwd,
+        force: options.force,
+      });
+
+      for (const archivePath of archives) {
+        console.log(`Built Claude desktop skill archive: ${archivePath}`);
+      }
+
+      return;
+    }
+
+    if (command !== "init") {
+      throw new Error(
+        `Unsupported command "${command}". Supported commands: init, export claude-desktop`
+      );
+    }
   } catch (error) {
     console.error(`Error: ${error.message}`);
     process.exitCode = 1;

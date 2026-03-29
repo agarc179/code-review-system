@@ -5,6 +5,14 @@ const path = require("path");
 const REPO_ROOT = path.resolve(__dirname, "..");
 const SKILLS_DIR = path.join(REPO_ROOT, "skills");
 const SKILL_MANIFEST_PATH = path.join(REPO_ROOT, "skill.json");
+const ASSISTANT_ALIASES = {
+  "github-copilot": "githubcopilot",
+};
+const ASSISTANT_LABELS = {
+  codex: "Codex",
+  claude: "Claude Code",
+  githubcopilot: "GitHub Copilot",
+};
 
 function readManifest() {
   return JSON.parse(fs.readFileSync(SKILL_MANIFEST_PATH, "utf8"));
@@ -25,6 +33,128 @@ function listSupportedAssistants() {
   return readManifest().assistants;
 }
 
+function normalizeAssistantTarget(target) {
+  return ASSISTANT_ALIASES[target] || target;
+}
+
+function getAssistantLabel(target) {
+  return ASSISTANT_LABELS[target] || target;
+}
+
+function formatAssistantTargetsForHelp(supportedAssistants) {
+  return supportedAssistants.join(", ");
+}
+
+function makeCrcTable() {
+  const table = new Uint32Array(256);
+
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+
+    table[index] = value >>> 0;
+  }
+
+  return table;
+}
+
+const CRC_TABLE = makeCrcTable();
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function toZipDateParts(date = new Date()) {
+  const year = Math.max(date.getFullYear(), 1980);
+
+  return {
+    date:
+      ((year - 1980) << 9) |
+      ((date.getMonth() + 1) << 5) |
+      date.getDate(),
+    time:
+      (date.getHours() << 11) |
+      (date.getMinutes() << 5) |
+      Math.floor(date.getSeconds() / 2),
+  };
+}
+
+function createStoredZip(entries) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBuffer = Buffer.from(entry.name.replace(/\\/g, "/"), "utf8");
+    const dataBuffer = Buffer.isBuffer(entry.data)
+      ? entry.data
+      : Buffer.from(entry.data, "utf8");
+    const stats = toZipDateParts(entry.date);
+    const checksum = crc32(dataBuffer);
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(stats.time, 10);
+    localHeader.writeUInt16LE(stats.date, 12);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(dataBuffer.length, 18);
+    localHeader.writeUInt32LE(dataBuffer.length, 22);
+    localHeader.writeUInt16LE(nameBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuffer, dataBuffer);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(stats.time, 12);
+    centralHeader.writeUInt16LE(stats.date, 14);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(dataBuffer.length, 20);
+    centralHeader.writeUInt32LE(dataBuffer.length, 24);
+    centralHeader.writeUInt16LE(nameBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    centralParts.push(centralHeader, nameBuffer);
+    offset += localHeader.length + nameBuffer.length + dataBuffer.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const localDirectory = Buffer.concat(localParts);
+  const endRecord = Buffer.alloc(22);
+
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(entries.length, 8);
+  endRecord.writeUInt16LE(entries.length, 10);
+  endRecord.writeUInt32LE(centralDirectory.length, 12);
+  endRecord.writeUInt32LE(localDirectory.length, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  return Buffer.concat([localDirectory, centralDirectory, endRecord]);
+}
+
 function parseAiTargets(aiValue, supportedAssistants) {
   if (!aiValue || aiValue === "all") {
     return supportedAssistants;
@@ -32,7 +162,7 @@ function parseAiTargets(aiValue, supportedAssistants) {
 
   const targets = aiValue
     .split(",")
-    .map((value) => value.trim().toLowerCase())
+    .map((value) => normalizeAssistantTarget(value.trim().toLowerCase()))
     .filter(Boolean);
 
   const invalidTargets = targets.filter(
@@ -250,6 +380,70 @@ function installNativeSkillDirectory(skillName, assistant, targetRoot, force) {
   copyDirectory(path.join(SKILLS_DIR, skillName), targetDirectory, force, ["overrides"]);
 }
 
+function listClaudeDesktopFiles(skillDirectory) {
+  const results = [];
+
+  function walk(currentDirectory) {
+    for (const entry of fs.readdirSync(currentDirectory, { withFileTypes: true })) {
+      if (entry.name === ".DS_Store" || entry.name === "agents" || entry.name === "overrides") {
+        continue;
+      }
+
+      const currentPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        walk(currentPath);
+        continue;
+      }
+
+      results.push(currentPath);
+    }
+  }
+
+  walk(skillDirectory);
+  return results.sort();
+}
+
+function toClaudeDesktopArchiveEntries(skillName) {
+  const skillDirectory = path.join(SKILLS_DIR, skillName);
+
+  return listClaudeDesktopFiles(skillDirectory).map((filePath) => {
+    const relativePath = path.relative(skillDirectory, filePath);
+    const archiveRelativePath =
+      relativePath === "SKILL.md"
+        ? "Skill.md"
+        : relativePath;
+
+    return {
+      name: `${skillName}/${archiveRelativePath.replace(/\\/g, "/")}`,
+      data: fs.readFileSync(filePath),
+      date: fs.statSync(filePath).mtime,
+    };
+  });
+}
+
+function exportClaudeDesktopSkills({ outputDir, force }) {
+  const skillNames = listSkillDirectories();
+  ensureDirectory(outputDir);
+  const archives = [];
+
+  for (const skillName of skillNames) {
+    const zipPath = path.join(outputDir, `${skillName}.zip`);
+
+    if (!force && pathExists(zipPath)) {
+      throw new Error(
+        `Refusing to overwrite existing file without --force: ${zipPath}`
+      );
+    }
+
+    const archiveBuffer = createStoredZip(toClaudeDesktopArchiveEntries(skillName));
+    fs.writeFileSync(zipPath, archiveBuffer);
+    archives.push(zipPath);
+  }
+
+  return archives;
+}
+
 function installForCodex(skillNames, cwd, globalInstall, force) {
   const targetRoot = resolveCodexTarget(globalInstall, cwd);
   ensureDirectory(targetRoot);
@@ -334,16 +528,20 @@ async function installSkills({
   }
 
   for (const result of results) {
-    console.log(`Installed ${readManifest().name} for ${result.assistant}: ${result.path}`);
+    console.log(
+      `Installed ${readManifest().name} for ${getAssistantLabel(result.assistant)}: ${result.path}`
+    );
   }
 }
 
 function printHelp() {
-  const assistants = listSupportedAssistants().join(", ");
+  const assistants = formatAssistantTargetsForHelp(listSupportedAssistants());
 
-  console.log(`codepro init [options]
+  console.log(`codepro <command> [options]
 
-Install code review skills for supported AI assistants.
+Commands:
+  init                      Install skills for supported AI assistants
+  export claude-desktop     Build ZIP archives for Claude desktop custom skill upload
 
 Options:
   -a, --ai <targets>    Assistant target(s): ${assistants}, or all
@@ -356,10 +554,12 @@ Examples:
   codepro init --ai codex --global
   codepro init --ai claude,githubcopilot
   codepro init --ai all --dir /tmp/demo
+  codepro export claude-desktop --dir ./dist/claude-desktop
 `);
 }
 
 module.exports = {
+  exportClaudeDesktopSkills,
   installSkills,
   listSupportedAssistants,
   printHelp,
