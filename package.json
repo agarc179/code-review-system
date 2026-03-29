@@ -1,0 +1,26 @@
+{
+  "name": "code-review-pro-skill",
+  "version": "0.1.0",
+  "description": "Portable code review skills for Codex, Claude, and GitHub Copilot.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "codepro": "./bin/codePro.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "skill.json",
+    "README.md",
+    "LICENSE",
+    "install.sh"
+  ],
+  "scripts": {
+    "init:codex": "node ./src/cli.js init --ai codex",
+    "test:smoke": "node ./src/cli.js --help"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
